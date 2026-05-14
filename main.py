@@ -1,6 +1,9 @@
 import sys
 import os
 
+from src.db.orm import init_db
+init_db()
+
 # Añade la carpeta "src" al path para que imports como "from controllers... " funcionen
 sys.path.insert(
     0,
