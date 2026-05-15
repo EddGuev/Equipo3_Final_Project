@@ -3,4 +3,5 @@ __pycache__/
 venv/
 .env
 .idea/
-.vscode/
+.vscode/chatdoc.db
+database/app_database.db
