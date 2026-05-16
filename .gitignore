@@ -5,3 +5,5 @@ venv/
 .idea/
 .vscode/chatdoc.db
 database/app_database.db
+chatdoc.db
+database/app_database.db
