@@ -1,131 +1,76 @@
-# src/ai/simulator.py
+﻿# src/ai/simulator.py
 """
-Simulador avanzado para respuestas tipo IA.
-Este módulo intenta comportarse como proveedor de fallback cuando no hay API keys.
-Exporta `get_ai_response(prompt, history=None)`.
+Simulador de IA que genera respuestas basadas en el contexto del archivo.
 """
-from dotenv import load_dotenv
-load_dotenv()
-
-import os
 import random
 import re
-import textwrap
-from typing import List, Optional
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-USE_SIMULATOR = not (bool(GEMINI_API_KEY) or bool(GOOGLE_API_KEY))
-
-_STOPWORDS = {
-    "de","la","que","el","en","y","a","los","del","se","las","por","un","para",
-    "con","no","una","su","al","lo","como","más","o","pero","sus","le","ya",
-    "fue","este","ha","sí","son","entre"
-}
+from typing import Optional
 
 
-def _tokenize(text: str) -> List[str]:
-    text = re.sub(r"[^\w\s]", " ", text.lower())
-    return [t for t in text.split() if t and t not in _STOPWORDS]
-
-
-def _top_keywords(text: str, n: int = 5) -> List[str]:
-    toks = _tokenize(text)
-    freq = {}
-    for t in toks:
-        freq[t] = freq.get(t, 0) + 1
-    items = sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))
-    return [k for k, _ in items[:n]]
-
-
-def _first_sentences(text: str, max_sent: int = 2) -> str:
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-    return " ".join(sentences[:max_sent]).strip()
-
-
-def simulate_ai_response(prompt: str, history: Optional[List[str]] = None) -> str:
-    history = history or []
-    p = prompt.strip()
-    lower = p.lower()
-
-    # Detectores simples
-    wants_summary = any(k in lower for k in ("resum", "sintetiz", "summary", "resume"))
-    wants_list = any(k in lower for k in ("lista", "puntos", "enumerar", "bullet", "bullets"))
-    wants_explain = any(k in lower for k in ("explica", "explicar", "describe", "describir", "eli5"))
-
-    keywords = _top_keywords(p, n=4)
-
-    intros = [
-        "Según lo que pides, aquí va una respuesta útil:",
-        "Buena pregunta — esto es lo que propongo:",
-        "Basado en la información disponible, respuesta:",
-        "Aquí tienes una respuesta orientativa:"
-    ]
-    intro = random.choice(intros)
-
-    ctx = ""
-    if history:
-        last = history[-1]
-        ctx_k = _top_keywords(last, n=3)
-        if ctx_k:
-            ctx = f"(Contexto: {', '.join(ctx_k)}) "
-
-    # Generadores de respuesta por tipo
-    if wants_summary:
-        if ":" in p and len(p.split(":", 1)[1].strip()) > 40:
-            candidate = p.split(":", 1)[1].strip()
-            summary = _first_sentences(candidate, max_sent=3)
-            return f"{intro} {ctx}Resumen generado:\n\n{summary}"
-        if keywords:
-            return f"{intro} {ctx}Resumen breve: se centra en {', '.join(keywords)}. " \
-                   "Si quieres un resumen más largo, pega el texto o pide 'resumen detallado'."
-
-    if wants_list:
-        parts = re.split(r'\band\b|,|;|\n', p)
-        bullets = []
-        for part in parts:
-            txt = part.strip()
-            if len(txt) > 8 and len(bullets) < 8:
-                bullets.append(f"- {textwrap.shorten(txt, width=80)}")
-        if bullets:
-            return f"{intro} {ctx}Aquí tienes una lista basada en tu petición:\n" + "\n".join(bullets)
-        if keywords:
-            return f"{intro} {ctx}Puntos clave:\n" + "\n".join(f"- {k}" for k in keywords)
-
-    if wants_explain:
-        if "eli5" in lower or "como si tuviera 5" in lower or "como si fuera un niño" in lower:
-            return f"{intro} {ctx}Explicación sencilla: Imagina que ... (resumen simple). Si quieres detalles técnicos, pide 'nivel técnico'."
-        if keywords:
-            return f"{intro} {ctx}Explicación sobre {', '.join(keywords)}:\n" + \
-                   "En términos sencillos, esto significa que ... (detalle general)."
-
-    base_answer_templates = [
-        "He leído tu petición. Mi sugerencia principal es enfocarse en: {k}. ¿Quieres que desarrolle un plan?",
-        "Respuesta orientativa: considera revisar {k} y validar con datos reales. Puedo preparar un checklist.",
-        "Posible enfoque: 1) identificar {k}; 2) priorizar; 3) prototipar y testear. ¿Deseas ejemplos?"
-    ]
-    template = random.choice(base_answer_templates)
-    ktext = ", ".join(keywords) if keywords else "los puntos clave mencionados"
-    reply = template.format(k=ktext)
-
-    if history:
-        reply += f"\n\nNota: según el último mensaje ({textwrap.shorten(history[-1], 80)}), esto conecta con {ktext}."
-
-    return f"{intro} {ctx}{reply}"
-
-
-def get_ai_response(prompt: str, history: Optional[List[str]] = None) -> str:
+def get_ai_response(prompt: str, contexto: Optional[str] = None) -> str:
     """
-    Punto único de llamada para obtener respuesta AI.
-    Si hay API keys, aquí deberías integrar las llamadas reales.
+    Genera una respuesta simulada basada en el prompt y el contexto del archivo.
     """
-    if USE_SIMULATOR:
-        return simulate_ai_response(prompt, history)
+    prompt = (prompt or "").strip().lower()
+    contexto = (contexto or "").strip()
+    
+    # Si no hay contexto (chat sin archivo)
+    if not contexto or len(contexto) < 10:
+        return _respuesta_sin_archivo(prompt)
+    
+    # Chat con archivo cargado
+    return _respuesta_con_archivo(prompt, contexto)
 
-    # Placeholder para integración real
-    if GEMINI_API_KEY:
-        return "[Implementar llamada a Gemini]"
-    if GOOGLE_API_KEY:
-        return "[Implementar llamada a Google]"
 
-    return "[Error] No hay proveedor AI configurado."
+def _respuesta_sin_archivo(prompt: str) -> str:
+    """Respuestas cuando no hay archivo cargado."""
+    respuestas_generales = [
+        f"🤖 **Simulación IA:** Entiendo tu pregunta sobre '{prompt[:50]}...'\n\nPuedo ayudarte mejor si cargas un archivo para analizar. ¿Quieres que te explique cómo funciona ChatDoc?",
+        f"💡 Pregunta recibida: '{prompt[:60]}...'\n\nActualmente estoy en modo simulación. Carga un archivo (TXT, PDF, JSON, XML) para que pueda analizarlo y responder preguntas específicas sobre su contenido.",
+        f"📚 Hola! Soy el asistente de ChatDoc en modo simulación.\n\nPara darte respuestas precisas, necesito que cargues un documento. Mientras tanto, puedo responder preguntas generales sobre el sistema.",
+    ]
+    
+    # Detectar preguntas específicas
+    if any(word in prompt for word in ['hola', 'hello', 'hi', 'qué tal']):
+        return "👋 ¡Hola! Soy el asistente de ChatDoc en modo **Simulación IA**.\n\nPuedo ayudarte a analizar documentos (TXT, PDF, JSON, XML). Carga un archivo usando el botón '📂 Cargar Archivo' para comenzar."
+    
+    elif any(word in prompt for word in ['cómo', 'funciona', 'ayuda', 'help']):
+        return "ℹ️ **Cómo usar ChatDoc:**\n\n1. Carga un archivo (TXT, PDF, JSON, XML)\n2. Haz preguntas sobre su contenido\n3. Exporta la conversación a JSON/XML\n4. Cambia entre Simulación IA y IA Real\n\n💡 *Actualmente en modo Simulación IA*"
+    
+    return random.choice(respuestas_generales)
+
+
+def _respuesta_con_archivo(prompt: str, contexto: str) -> str:
+    """Respuestas cuando hay archivo cargado."""
+    # Extraer primeras líneas del contexto
+    lineas = contexto.split('\n')[:10]
+    preview = '\n'.join(lineas)
+    
+    # Detectar tipo de pregunta
+    if any(word in prompt for word in ['resumen', 'resume', 'trata', 'sobre qué', 'tema']):
+        return f"📋 **Resumen del archivo:**\n\nEl documento contiene aproximadamente {len(contexto)} caracteres. Las primeras líneas son:\n\n{preview[:300]}...\n\n💡 *Nota: Esta es una respuesta simulada. Activa el modo REAL para análisis completo con IA.*"
+    
+    elif any(word in prompt for word in ['cuánto', 'cantidad', 'número', 'líneas']):
+        num_lineas = len(lineas)
+        num_palabras = len(contexto.split())
+        return f"📊 **Estadísticas del archivo:**\n- Líneas: ~{num_lineas}\n- Palabras: ~{num_palabras}\n- Caracteres: {len(contexto)}\n\n💡 *Respuesta simulada*"
+    
+    elif any(word in prompt for word in ['busca', 'encuentra', 'contiene', 'hay']):
+        # Buscar palabras clave en el prompt
+        palabras = [p for p in prompt.split() if len(p) > 3 and p not in ['busca', 'encuentra', 'contiene', 'archivo']]
+        if palabras:
+            palabra = palabras[0]
+            count = contexto.lower().count(palabra)
+            if count > 0:
+                return f"🔍 Encontré **{count}** ocurrencia(s) de '{palabra}' en el archivo.\n\n💡 *Respuesta simulada*"
+            else:
+                return f"🔍 No encontré '{palabra}' en el archivo.\n\n💡 *Respuesta simulada*"
+    
+    # Respuesta genérica
+    respuestas = [
+        f"🤖 He analizado el archivo. Contiene {len(contexto)} caracteres de información.\n\nPrimeras líneas:\n{preview[:200]}...\n\n💡 *Respuesta simulada. Cambia a modo REAL para análisis completo.*",
+        f"📖 El documento parece contener información técnica. Aquí un extracto:\n\n{preview[:250]}...\n\n💡 *Modo Simulación IA activo*",
+        f"✅ Pregunta recibida: '{prompt[:50]}...'\n\nContexto disponible: {len(contexto)} caracteres.\n\n💡 *Activa modo REAL para respuestas precisas con IA*"
+    ]
+    
+    return random.choice(respuestas)
