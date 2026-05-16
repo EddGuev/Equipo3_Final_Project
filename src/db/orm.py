@@ -11,7 +11,13 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 DEFAULT_DB = os.path.join(BASE_DIR, "data", "app.db")
 
 def _conn(db_path: str = DEFAULT_DB):
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    """
+    Obtiene una conexión a SQLite.
+    Si db_path incluye carpeta, la crea. Si no (p. ej. 'test.db'), no intenta crearla.
+    """
+    dirpath = os.path.dirname(db_path)
+    if dirpath:
+        os.makedirs(dirpath, exist_ok=True)
     conn = sqlite3.connect(db_path, detect_types=sqlite3.PARSE_DECLTYPES, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
