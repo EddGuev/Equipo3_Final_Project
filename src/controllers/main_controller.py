@@ -1,118 +1,186 @@
 ﻿# src/controllers/main_controller.py
+from PyQt6.QtCore import QObject
 from views.main_window import VentanaPrincipal
 from models.chat_model import ModeloChat
+from datetime import datetime
 
-# Ajusta el import según cómo colocaste los archivos (src.db.api o db.api)
-from src.db.api import create_conversation, add_message, export_conversation_json, export_conversation_xml
-
-class ControladorPrincipal:
-    def __init__(self, usuario):
+class ControladorPrincipal(QObject):
+    def __init__(self, usuario: str):
+        super().__init__()
         self.usuario = usuario
-        self.modelo = ModeloChat()
+        self.modelo = ModeloChat(usuario)
         self.vista = VentanaPrincipal(usuario)
-
-        # Id de la conversación activa en la que se guardarán mensajes
-        self.current_conversation_id = None
-
-        # Conexiones de señales de la vista con métodos del controlador
-        self.vista.enviar_pregunta.connect(self._procesar_pregunta)
-        self.vista.solicitar_archivo.connect(self._cargar_archivo)
-
-        # Nuevas señales de exportación desde la vista
-        # (asegúrate de que VentanaPrincipal declare estas señales)
-        self.vista.export_json_requested.connect(self._export_json)
-        self.vista.export_xml_requested.connect(self._export_xml)
+        
+        # Conectar señales existentes
+        self.vista.enviar_pregunta.connect(self.procesar_pregunta)
+        self.vista.solicitar_archivo.connect(self.cargar_archivo)
+        self.vista.cambiar_modo_ia.connect(self.cambiar_modo_ia)
+        self.vista.export_json_requested.connect(self.exportar_json)
+        self.vista.export_xml_requested.connect(self.exportar_xml)
+        
+        # Conectar NUEVAS señales
+        self.vista.nueva_conversacion_requested.connect(self.nueva_conversacion)
+        self.vista.cargar_conversacion_requested.connect(self.cargar_conversacion)
+        self.vista.cerrar_sesion_requested.connect(self.cerrar_sesion)
+        self.vista.salir_requested.connect(self.salir_aplicacion)
+        
+        # Cargar historial al iniciar
+        self.actualizar_historial()
 
     def mostrar(self):
-        """Muestra la ventana principal y carga el historial previo."""
-        historial = self.modelo.obtener_historial()
-        for item in historial:
-            autor = item['autor']
-            msg = item['mensaje']
-            # Asignar colores según el autor
-            colores = {"Sistema": "#a6e3a1", "Assistant": "#fab387", "Usuario": "#b4befe"}
-            color = colores.get(autor, "#cdd6f4")
-            self.vista.agregar_mensaje(autor, msg, color)
-
+        """Muestra la ventana principal"""
         self.vista.show()
 
-    def _cargar_archivo(self):
-        """Maneja la lógica de selección y carga de archivos."""
-        ruta = self.vista.seleccionar_archivo()
-        if ruta:
-            # tu lógica existente que extrae texto y guarda en modelo
-            resultado = self.modelo.cargar_archivo(ruta)
-            # Crear una nueva conversación en la BD y guardarla en el controlador
-            conv_id = create_conversation(file_name=ruta)
-            self.current_conversation_id = conv_id
-
-            # Actualizar la UI: mostrar nombre del archivo
-            nombre = ruta.split("\\")[-1]  # Windows path, si usas posix usa '/'
-            self.vista.set_loaded_file(nombre)
-
-            # Mensaje de sistema en interfaz
-            self.vista.agregar_mensaje("Sistema", resultado, "#a6e3a1")
-
-            # (Opcional) almacenar mensaje inicial en BD
-            try:
-                add_message(conv_id, "sistema", f"Archivo cargado: {nombre}")
-            except Exception as e:
-                # No detener la app si falla la BD; loggear sería ideal
-                print("Warning: no se pudo guardar mensaje en DB:", e)
-
-    def _procesar_pregunta(self, pregunta):
-        """Maneja la lógica de envío de preguntas a la IA."""
-        # Guardar mensaje del usuario en la BD (crear conversación si no existe)
-        if not self.current_conversation_id:
-            # crear conversación sin archivo asociado
-            self.current_conversation_id = create_conversation(file_name=None)
-
+    def procesar_pregunta(self, pregunta: str):
+        """Procesa la pregunta del usuario"""
         try:
-            add_message(self.current_conversation_id, "usuario", pregunta)
+            respuesta = self.modelo.procesar_pregunta(pregunta)
+            self.vista.agregar_mensaje("A", respuesta, "#a6e3a1")
+            
+            # Actualizar historial después de cada interacción
+            self.actualizar_historial()
+            
         except Exception as e:
-            print("Warning: fallo al guardar mensaje de usuario:", e)
+            self.vista.mostrar_error(f"Error al procesar pregunta: {str(e)}")
 
-        # Obtener respuesta del modelo (tu implementación actual)
-        respuesta = self.modelo.obtener_respuesta_ia(pregunta)
-
-        # Guardar la respuesta en BD
+    def cargar_archivo(self):
+        """Carga un archivo seleccionado por el usuario"""
         try:
-            add_message(self.current_conversation_id, "modelo", respuesta)
+            ruta = self.vista.seleccionar_archivo()
+            if ruta:
+                self.modelo.cargar_archivo(ruta)
+                self.vista.set_loaded_file(ruta)
+                
+                nombre_archivo = ruta.split("\\")[-1] if "\\" in ruta else ruta.split("/")[-1]
+                self.vista.agregar_mensaje(
+                    "Sistema", 
+                    f"✅ Archivo '{nombre_archivo}' cargado correctamente ({len(self.modelo.contenido_archivo)} caracteres)",
+                    "#f9e2af"
+                )
+                
+                # Actualizar historial
+                self.actualizar_historial()
+                
         except Exception as e:
-            print("Warning: fallo al guardar respuesta del modelo:", e)
+            self.vista.mostrar_error(f"Error al cargar archivo: {str(e)}")
 
-        # Mostrar la respuesta en la UI
-        self.vista.agregar_mensaje("AI Assistant", respuesta, "#fab387")
+    def cambiar_modo_ia(self, modo: str):
+        """Cambia el modo de IA (simulacion/real)"""
+        self.modelo.set_modo_ia(modo)
+        modo_texto = "IA Real (Gemini)" if modo == "real" else "Simulación IA"
+        self.vista.agregar_mensaje("Sistema", f"🔄 Modo de IA cambiado a: {modo_texto}", "#f9e2af")
 
-    def _export_json(self):
-        """Manejador de exportar a JSON (invocado por la vista)."""
-        if not self.current_conversation_id:
-            self.vista.mostrar_error("No hay conversación activa para exportar.")
-            return
-
-        # La vista abre diálogo y devuelve la ruta elegida
-        path = self.vista.get_save_path("json")
-        if not path:
-            return
-
+    def exportar_json(self):
+        """Exporta la conversación actual a JSON"""
         try:
-            export_conversation_json(self.current_conversation_id, path)
-            self.vista.mostrar_info(f"Conversación exportada a JSON:\n{path}")
+            if not self.modelo.conversacion_id:
+                self.vista.mostrar_error("No hay conversación activa para exportar")
+                return
+            
+            ruta = self.vista.get_save_path("json")
+            if ruta:
+                self.modelo.exportar_json(ruta)
+                self.vista.mostrar_info(f"Conversación exportada a:\n{ruta}")
         except Exception as e:
-            self.vista.mostrar_error(f"No se pudo exportar: {e}")
+            self.vista.mostrar_error(f"Error al exportar JSON: {str(e)}")
 
-    def _export_xml(self):
-        """Manejador de exportar a XML (invocado por la vista)."""
-        if not self.current_conversation_id:
-            self.vista.mostrar_error("No hay conversación activa para exportar.")
-            return
-
-        path = self.vista.get_save_path("xml")
-        if not path:
-            return
-
+    def exportar_xml(self):
+        """Exporta la conversación actual a XML"""
         try:
-            export_conversation_xml(self.current_conversation_id, path)
-            self.vista.mostrar_info(f"Conversación exportada a XML:\n{path}")
+            if not self.modelo.conversacion_id:
+                self.vista.mostrar_error("No hay conversación activa para exportar")
+                return
+            
+            ruta = self.vista.get_save_path("xml")
+            if ruta:
+                self.modelo.exportar_xml(ruta)
+                self.vista.mostrar_info(f"Conversación exportada a:\n{ruta}")
         except Exception as e:
-            self.vista.mostrar_error(f"No se pudo exportar: {e}")
+            self.vista.mostrar_error(f"Error al exportar XML: {str(e)}")
+
+    # ========== NUEVAS FUNCIONALIDADES ==========
+
+    def nueva_conversacion(self):
+        """Inicia una nueva conversación"""
+        try:
+            # Limpiar chat
+            self.vista.limpiar_chat()
+            
+            # Crear nueva conversación en el modelo
+            self.modelo.nueva_conversacion()
+            
+            # Mensaje de bienvenida
+            self.vista.agregar_mensaje(
+                "Sistema",
+                "✨ Nueva conversación iniciada. Carga un archivo para comenzar.",
+                "#f9e2af"
+            )
+            
+            # Actualizar historial
+            self.actualizar_historial()
+            
+        except Exception as e:
+            self.vista.mostrar_error(f"Error al crear nueva conversación: {str(e)}")
+
+    def cargar_conversacion(self, conv_id: int):
+        """Carga una conversación anterior del historial"""
+        try:
+            # Obtener mensajes de la conversación
+            mensajes = self.modelo.obtener_mensajes_conversacion(conv_id)
+            
+            if not mensajes:
+                self.vista.mostrar_error("No se encontraron mensajes en esta conversación")
+                return
+            
+            # Cargar mensajes en la vista
+            self.vista.cargar_mensajes_conversacion(mensajes)
+            
+            # Actualizar ID de conversación actual
+            self.modelo.conversacion_id = conv_id
+            self.vista.conversacion_actual_id = conv_id
+            
+            # Obtener info del archivo asociado
+            archivo = self.modelo.obtener_archivo_conversacion(conv_id)
+            if archivo:
+                self.vista.set_loaded_file(archivo)
+            
+            self.vista.agregar_mensaje(
+                "Sistema",
+                f"📜 Conversación #{conv_id} cargada",
+                "#f9e2af"
+            )
+            
+        except Exception as e:
+            self.vista.mostrar_error(f"Error al cargar conversación: {str(e)}")
+
+    def actualizar_historial(self):
+        """Actualiza el panel de historial con las conversaciones del usuario"""
+        try:
+            conversaciones = self.modelo.obtener_historial_conversaciones()
+            self.vista.actualizar_historial(conversaciones)
+        except Exception as e:
+            print(f"Error al actualizar historial: {e}")
+
+    def cerrar_sesion(self):
+        """Cierra la sesión actual y vuelve al login"""
+        from PyQt6.QtWidgets import QMessageBox
+        
+        respuesta = QMessageBox.question(
+            self.vista,
+            "Cerrar Sesión",
+            "¿Deseas cerrar la sesión actual?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if respuesta == QMessageBox.StandardButton.Yes:
+            self.vista.close()
+            
+            # Importar y mostrar ventana de login
+            from controllers.login_controller import ControladorLogin
+            self.login_controller = ControladorLogin()
+            self.login_controller.mostrar()
+
+    def salir_aplicacion(self):
+        """Cierra completamente la aplicación"""
+        from PyQt6.QtWidgets import QApplication
+        QApplication.quit()
